@@ -1,0 +1,188 @@
+index.html
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>التقاط صورة بالكاميرا</title>
+  <style>
+    :root { --pad: 12px; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#0b0b0c; color:#f5f5f7; }
+    header, footer { padding: var(--pad); text-align:center; }
+    main { padding: var(--pad); max-width: 720px; margin: 0 auto; }
+    .card { background:#151517; border:1px solid #2a2a2e; border-radius:14px; overflow:hidden; }
+    .viewport { position: relative; background:#000; aspect-ratio: 3/4; }
+    video, canvas, img#photo {
+      position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+    }
+    .controls { display:flex; flex-wrap:wrap; gap:10px; padding: var(--pad); justify-content:center; border-top:1px solid #2a2a2e; }
+    button, a.btn {
+      border:1px solid #3a3a3f; background:#1e1e22; color:#fff; padding:10px 14px; border-radius:10px;
+      cursor:pointer; font-weight:600; text-decoration:none; transition: .2s;
+    }
+    button:disabled { opacity:.5; cursor:not-allowed; }
+    button.primary { background:#2d6cdf; border-color:#2d6cdf; }
+    .row { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+    #status { padding:8px 12px; text-align:center; font-size:0.95rem; color:#c4c4c8; }
+    .hint { font-size:.9rem; color:#b8b8be; margin-top:8px; text-align:center; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>التقاط صورة بالكاميرا (بإذن المستخدم)</h1>
+  </header>
+
+  <main class="card" aria-live="polite">
+    <div class="viewport">
+      <video id="preview" playsinline autoplay muted></video>
+      <canvas id="canvas" style="display:none;"></canvas>
+      <img id="photo" alt="الصورة الملتقطة" style="display:none;" />
+    </div>
+
+    <div id="status">لم يتم تشغيل الكاميرا بعد.</div>
+
+    <div class="controls">
+      <div class="row">
+        <button id="startBtn" class="primary">تشغيل الكاميرا</button>
+        <button id="switchBtn" title="التبديل بين الأمامية والخلفية" disabled>تبديل الكاميرا</button>
+        <button id="captureBtn" disabled>التقاط صورة</button>
+        <button id="retakeBtn" style="display:none;">إعادة الالتقاط</button>
+        <a id="downloadLink" class="btn" style="display:none;" download="photo.jpg">تنزيل الصورة</a>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="hint">
+      يعمل فقط عبر HTTPS أو على <code>localhost</code>، وسيطلب المتصفح إذنك قبل استخدام الكاميرا.
+    </div>
+  </footer>
+
+  <script>
+    const video = document.getElementById('preview');
+    const canvas = document.getElementById('canvas');
+    const photo  = document.getElementById('photo');
+    const startBtn = document.getElementById('startBtn');
+    const switchBtn = document.getElementById('switchBtn');
+    const captureBtn = document.getElementById('captureBtn');
+    const retakeBtn = document.getElementById('retakeBtn');
+    const downloadLink = document.getElementById('downloadLink');
+    const statusEl = document.getElementById('status');
+
+    let stream = null;
+    let usingFront = true; // ابدأ بالأمامية على الجوال غالباً
+    let currentTrack = null;
+
+    function setStatus(msg) { statusEl.textContent = msg; }
+
+    function stopStream() {
+      if (stream) { stream.getTracks().forEach(t => t.stop()); }
+      stream = null;
+      currentTrack = null;
+    }
+
+    async function startCamera() {
+      try {
+        stopStream();
+        setStatus('طلب إذن الكاميرا...');
+        const constraints = {
+          audio: false,
+          video: {
+            facingMode: usingFront ? 'user' : 'environment',
+            width: { ideal: 1920 },
+            height: { ideal: 1080 }
+          }
+        };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        currentTrack = stream.getVideoTracks()[0];
+
+        // فعّل الأزرار
+        captureBtn.disabled = false;
+        switchBtn.disabled = false;
+        startBtn.textContent = 'إعادة تشغيل الكاميرا';
+
+        // إظهار المعاينة
+        video.style.display = '';
+        canvas.style.display = 'none';
+        photo.style.display  = 'none';
+        retakeBtn.style.display = 'none';
+        downloadLink.style.display = 'none';
+
+        setStatus('الكاميرا تعمل. عندما تكون جاهزاً اضغط "التقاط صورة".');
+      } catch (err) {
+        console.error(err);
+        let msg = 'تعذر تشغيل الكاميرا.';
+        if (err.name === 'NotAllowedError') msg = 'تم رفض الإذن. يرجى السماح للمتصفح باستخدام الكاميرا.';
+        if (err.name === 'NotFoundError') msg = 'لا توجد كاميرا متاحة على هذا الجهاز.';
+        if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+          msg += ' ملاحظة: يجب فتح الصفحة عبر HTTPS أو localhost.';
+        }
+        setStatus(msg);
+      }
+    }
+
+    function capture() {
+      if (!stream) return;
+      const trackSettings = currentTrack?.getSettings?.() || {};
+      const vw = video.videoWidth;
+      const vh = video.videoHeight;
+
+      // اضبط canvas حسب دقة الفيديو (أو أبعاد viewport إذا لم تتوفر)
+      const width = vw || video.clientWidth || 720;
+      const height = vh || video.clientHeight || Math.round(width * 4/3);
+
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, width, height);
+
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+      photo.src = dataUrl;
+
+      // إظهار الصورة وإخفاء الفيديو
+      video.style.display = 'none';
+      canvas.style.display = 'none'; // لا حاجة لعرضه
+      photo.style.display  = '';
+
+      // أزرار بعد الالتقاط
+      retakeBtn.style.display = '';
+      downloadLink.href = dataUrl;
+      downloadLink.style.display = '';
+      setStatus('تم التقاط الصورة. يمكنك تنزيلها أو إعادة الالتقاط.');
+    }
+
+    async function switchCamera() {
+      usingFront = !usingFront;
+      await startCamera();
+      setStatus(usingFront ? 'تم التبديل إلى الكاميرا الأمامية.' : 'تم التبديل إلى الكاميرا الخلفية.');
+    }
+
+    function retake() {
+      // العودة للمعاينة دون إيقاف البث
+      video.style.display = '';
+      photo.style.display  = 'none';
+      downloadLink.style.display = 'none';
+      retakeBtn.style.display = 'none';
+      setStatus('عدنا للمعاينة. يمكنك الالتقاط مرة أخرى.');
+    }
+
+    // ربط الأحداث
+    startBtn.addEventListener('click', startCamera);
+    switchBtn.addEventListener('click', switchCamera);
+    captureBtn.addEventListener('click', capture);
+    retakeBtn.addEventListener('click', retake);
+
+    // تحسين تجربة iOS: إجبار الفيديو على وضع "inline"
+    video.setAttribute('playsinline', '');
+    video.setAttribute('autoplay', '');
+    video.setAttribute('muted', '');
+
+    // تحذير إن لم تتوفر API
+    if (!('mediaDevices' in navigator) || !('getUserMedia' in navigator.mediaDevices)) {
+      setStatus('متصفحك لا يدعم getUserMedia. جرّب كروم/سفاري مُحدّث.');
+      startBtn.disabled = true;
+    }
+  </script>
+</body>
+</html>
